@@ -11,7 +11,7 @@ TARGET = texmetro
 #### QT STUFF ##################################################################
 
 TEMPLATE = app
-QT = core gui svg
+QT = core gui
 
 
 
