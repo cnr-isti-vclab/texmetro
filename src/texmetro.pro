@@ -59,9 +59,10 @@ SOURCES += \
     $$VCGPATH/wrap/ply/plylib.cpp \
     $$VCGPATH/wrap/openfbx/src/ofbx.cpp \
     $$VCGPATH/wrap/openfbx/src/miniz.c \
-    measure.cpp
+    $$VCGPATH/wrap/system/qgetopt.cpp
 
 SOURCES += \
     texmetro.cpp \
+    measure.cpp \
     gl_utils.cpp
 

@@ -29,19 +29,19 @@ static const char *vs_text_checker[] = {
 };
 
 static const char *fs_text_checker[] = {
-    "#version 430 core                                                                \n"
-    "                                                                                 \n"
-    "layout (r32ui) uniform uimage2D imgbuf;                                          \n"
-    "layout (r32ui) uniform uimage2D idbuf;                                           \n"
-    "in flat uint chartId;                                                            \n"
-    "out vec4 color;                                                                  \n"
-    "                                                                                 \n"
-    "void main(void)                                                                  \n"
-    "{                                                                                \n"
-    "    color = vec4(1.0, 1.0, 1.0, 1.0);                                            \n"
-    "    imageAtomicAdd(imgbuf, ivec2(gl_FragCoord.xy), 1);                           \n"
-    "    imageStore(idbuf, ivec2(gl_FragCoord.xy), uvec4(chartId));                   \n"
-    "}                                                                                \n"
+    "#version 430 core                                                     \n"
+    "                                                                      \n"
+    "layout (r32ui) uniform uimage2D imgbuf;                               \n"
+    "layout (r32ui) uniform uimage2D idbuf;                                \n"
+    "in flat uint chartId;                                                 \n"
+    "out vec4 color;                                                       \n"
+    "                                                                      \n"
+    "void main(void)                                                       \n"
+    "{                                                                     \n"
+    "    color = vec4(1.0, 1.0, 1.0, 1.0);                                 \n"
+    "    imageAtomicAdd(imgbuf, ivec2(gl_FragCoord.xy), 1);                \n"
+    "    imageStore(idbuf, ivec2(gl_FragCoord.xy), uvec4(chartId));        \n"
+    "}                                                                     \n"
 };
 
 
@@ -81,15 +81,34 @@ MeshInfo ComputeMeshInfo(Mesh& m)
         minfo.g = tri::Clean<Mesh>::MeshGenus(m);
     }
 
+    minfo.bnd_len = 0;
+    for (auto& f : m.face) {
+        for (int i = 0; i < 3; ++i) {
+            if (face::IsBorder(f, i))
+                minfo.bnd_len += DistortionWedge::EdgeLenght3D(&f, i);
+        }
+    }
+
+    minfo.fnzero = 0;
+    for (auto& f : m.face) {
+        if (DistortionWedge::Area3D(&f) <= 0)
+            minfo.fnzero++;
+    }
+
+    tri::Clean<Mesh>::OrientCoherentlyMesh(m, minfo.oriented, minfo.orientable);
+    tri::UpdateTopology<Mesh>::FaceFace(m);
+    minfo.vnunref = tri::Clean<Mesh>::CountUnreferencedVertex(m);
+
     return minfo;
 }
 
-AtlasInfo ComputeAtlasInfo(Mesh& m, const std::vector<Chart>& atlas, const MeshInfo& minfo)
+AtlasInfo ComputeAtlasInfo(Mesh& m, const std::vector<Chart>& atlas)
 {
     AtlasInfo ainfo = {};
 
-    // seam edges that are not boundary edges
-    ainfo.en_seam = (std::accumulate(atlas.begin(), atlas.end(), 0, [](int a, const Chart& chart) { return a + chart.boundaryCount; }) - minfo.en_b) / 2;
+    // count seams in uv space
+    int nme;
+    tri::Clean<Mesh>::CountEdgeNum(m, ainfo.en_uv, ainfo.en_uv_b, nme);
 
     // number of chart
     ainfo.nc = atlas.size();
@@ -97,8 +116,8 @@ AtlasInfo ComputeAtlasInfo(Mesh& m, const std::vector<Chart>& atlas, const MeshI
     // number of null chart
     ainfo.nnc = std::count_if(atlas.begin(), atlas.end(), [](const Chart& chart) { return chart.areaUV == 0; });
 
-    std::vector<double> f3D(m.FN(), 0); // face area 3D
-    std::vector<double> fUV(m.FN(), 0); // face area uv (signed)
+    std::vector<double> f3D(m.FN(), 0); // face areas 3D
+    std::vector<double> fUV(m.FN(), 0); // face areas uv (signed)
 
     double totalArea3D = 0;
     double mappedArea3D = 0;
@@ -171,7 +190,6 @@ AtlasInfo ComputeAtlasInfo(Mesh& m, const std::vector<Chart>& atlas, const MeshI
                 double adminus = std::pow(jf(0, 0) - jf(1, 1), 2.0);
                 double s_min = 0.5 * std::abs(std::sqrt(bcplus + adminus) - std::sqrt(bcminus + adplus));
                 double s_max = 0.5 * (std::sqrt(bcplus + adminus) + std::sqrt(bcminus + adplus));
-
                 qcv[fi] = s_max / s_min;
                 if (std::isfinite(qcv[fi]))
                     ainfo.qcHist.Add(qcv[fi], f3D[fi]);
@@ -220,7 +238,7 @@ std::vector<std::vector<TexImageInfo>> ComputeTexImageInfoAtMipLevels(Mesh& m, c
 
     std::vector<std::vector<TexImageInfo>> perTextureMipInfo;
     for (int i = 0; i < ntex; ++i) {
-        std::vector<TexImageInfo> mipInfoVec;
+        std::vector<TexImageInfo> texInfoVec;
         int tw = m.texsizes[i].w;
         int th = m.texsizes[i].h;
 
@@ -233,12 +251,12 @@ std::vector<std::vector<TexImageInfo>> ComputeTexImageInfoAtMipLevels(Mesh& m, c
         }
 
         while (std::min(tw, th) >= MIN_DIM) {
-            TexImageInfo mipInfo = ComputeTexImageInfo(m, facesByTexture[i], tw, th);
-            mipInfoVec.push_back(mipInfo);
+            TexImageInfo texInfo = ComputeTexImageInfo(m, facesByTexture[i], tw, th);
+            texInfoVec.push_back(texInfo);
             tw /= 2;
             th /= 2;
         }
-        perTextureMipInfo.push_back(mipInfoVec);
+        perTextureMipInfo.push_back(texInfoVec);
 
         // de-normalize uvs
         for (auto fp : facesByTexture[i]) {
@@ -253,7 +271,7 @@ std::vector<std::vector<TexImageInfo>> ComputeTexImageInfoAtMipLevels(Mesh& m, c
 }
 
 static const int BitClear = 1;
-static const int BitSet = 1;
+static const int BitSet = 2;
 
 inline int Check3x3(unsigned *buffer, int row, int col, int width, int height)
 {
@@ -310,7 +328,7 @@ static TexImageInfo ComputeTexImageInfo(Mesh& m, const std::vector<Mesh::FacePoi
                       << format.majorVersion() << "." << format.minorVersion() << std::endl;
         }
         if (format.profile() != QSurfaceFormat::OpenGLContextProfile::CoreProfile){
-            std::cerr << "Warniing: Core OpenGL profile not available" << std::endl;
+            std::cerr << "Warning: Core OpenGL profile not available" << std::endl;
         }
     }
 
@@ -318,16 +336,29 @@ static TexImageInfo ComputeTexImageInfo(Mesh& m, const std::vector<Mesh::FacePoi
     surface.setFormat(context.format());
     surface.create();
 
-    context.makeCurrent(&surface);
+    if (!context.makeCurrent(&surface)) {
+        std::cerr << "Failed to create OpenGL context" << std::endl;
+        std::exit(-1);
+    }
 
     glewExperimental = GL_TRUE;
     GLenum err = glewInit();
     if (err)
     {
-        std::cerr << "glew init error " << glewGetErrorString(err) << std::endl;
+        std::cerr << "Failed to initialize GLEW " << glewGetErrorString(err) << std::endl;
         std::exit(-1);
     }
     glGetError();
+
+    GLint maxTexSize;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTexSize);
+    if (std::max(width, height) > maxTexSize) {
+        std::cerr << "Warning: texture size exceeds implementation limits" << std::endl;
+        TexImageInfo texInfo = {};
+        texInfo.w = width;
+        texInfo.h = height;
+        return texInfo;
+    }
 
     GLuint vao;
     glGenVertexArrays(1, &vao);
@@ -336,32 +367,40 @@ static TexImageInfo ComputeTexImageInfo(Mesh& m, const std::vector<Mesh::FacePoi
     GLint program = CompileShaders(vs_text_checker, fs_text_checker);
     glUseProgram(program);
 
+    CheckGLError();
     GLuint vertexbuf;
     glGenBuffers(1, &vertexbuf);
 
+    CheckGLError();
+
     glBindBuffer(GL_ARRAY_BUFFER, vertexbuf);
+    CheckGLError();
     glBufferData(GL_ARRAY_BUFFER, faces.size()*9*sizeof(float), NULL, GL_STATIC_DRAW);
+    CheckGLError();
     float *p = (float *) glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
     for (auto fptr : faces) {
         for (int i = 0; i < 3; ++i) {
             *p++ = fptr->cWT(i).U();
             *p++ = fptr->cWT(i).V();
-
             unsigned int *pp = (unsigned int *) p;
             *pp = (unsigned int) fptr->cid + 1; // the 'background' of the id buffer will be filled with 0s
-
             p++;
         }
     }
+    CheckGLError();
     glUnmapBuffer(GL_ARRAY_BUFFER);
 
+    CheckGLError();
     GLint pos_location = glGetAttribLocation(program, "position");
     glVertexAttribPointer(pos_location, 2, GL_FLOAT, GL_FALSE, 3*sizeof(float), 0);
     glEnableVertexAttribArray(pos_location);
 
+    CheckGLError();
     GLint pos_id = glGetAttribLocation(program, "chart_id");
     glVertexAttribPointer(pos_id, 1, GL_UNSIGNED_INT, GL_FALSE, 3*sizeof(float), (const GLvoid *) (2*sizeof(float)));
     glEnableVertexAttribArray(pos_id);
+
+    CheckGLError();
 
     p = nullptr;
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -375,6 +414,7 @@ static TexImageInfo ComputeTexImageInfo(Mesh& m, const std::vector<Mesh::FacePoi
     GLint loc_imgbuf = glGetUniformLocation(program, "imgbuf");
     glUniform1i(loc_imgbuf, imgbuf_unit);
 
+    CheckGLError();
     GLuint tex;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
@@ -384,13 +424,6 @@ static TexImageInfo ComputeTexImageInfo(Mesh& m, const std::vector<Mesh::FacePoi
 
     glBindImageTexture(imgbuf_unit, tex, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
 
-    // Texture to store marks. The texture is initially zero-initialized, and each fragment
-    // write checks if the stored pixel value is either zero, an 'invalid' value (0xffffffff), or a non-zero chart id.
-    // If it reads zero, it writes its value to the pixel (with atomic compare and swap). Otherwise, if the comparison failed
-    // and the returned value is invalid, nothing happens. If the returned value is another chart id instead, then it is checked
-    // against the chart id of the fragment, and if it is different it means that two different regions overlap on the pizxel, and
-    // is therefore set to the invalid value 0xffffffff
-    // Note that since 0 is a perfectly valid id, the id of each face as a vertex attribute is incremented by one
     constexpr int idbuf_unit = 1;
     GLint loc_idbuf = glGetUniformLocation(program, "idbuf");
     glUniform1i(loc_idbuf, idbuf_unit);
@@ -399,6 +432,7 @@ static TexImageInfo ComputeTexImageInfo(Mesh& m, const std::vector<Mesh::FacePoi
     glBindTexture(GL_TEXTURE_2D, tex_id);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, width, height);
 
+    CheckGLError();
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RED_INTEGER, GL_UNSIGNED_INT, sb);
     glBindImageTexture(idbuf_unit, tex_id, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
 
@@ -412,6 +446,7 @@ static TexImageInfo ComputeTexImageInfo(Mesh& m, const std::vector<Mesh::FacePoi
     glViewport(0, 0, width, height);
     glScissor(0, 0, width, height);
 
+    CheckGLError();
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_STENCIL_TEST);
 
@@ -428,6 +463,7 @@ static TexImageInfo ComputeTexImageInfo(Mesh& m, const std::vector<Mesh::FacePoi
     glBindTexture(GL_TEXTURE_2D, tex);
     glGetTexImage(GL_TEXTURE_2D, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, sb);
 
+    CheckGLError();
     unsigned *mb = new unsigned[width*height];
 
     glBindTexture(GL_TEXTURE_2D, tex_id);
@@ -435,32 +471,29 @@ static TexImageInfo ComputeTexImageInfo(Mesh& m, const std::vector<Mesh::FacePoi
 
     CheckGLError();
 
-    //glReadBuffer(GL_BACK);
-    //glReadPixels(0, 0, width, height, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, sb);
-
-    TexImageInfo mipInfo = {};
-    mipInfo.w = width;
-    mipInfo.h = height;
+    TexImageInfo texInfo = {};
+    texInfo.w = width;
+    texInfo.h = height;
     for (int i = 0; i < height; ++i) {
         for (int j = 0; j < width; ++j) {
             int k = i * width + j;
             int n = sb[k]; // stencil value
-            int kernelMask = Check3x3(sb, i, j, width, height);
+            int checkMask = Check3x3(sb, i, j, width, height);
             if (n > 0) {
-                mipInfo.totalFragments += n;
-                mipInfo.totalFragments_bilinear++;
+                texInfo.totalFragments += n;
+                texInfo.totalFragments_bilinear++;
                 if ((n > 1)) {
-                    mipInfo.overwrittenFragments++;
-                    mipInfo.lostFragments += (n - 1);
+                    texInfo.overwrittenFragments++;
+                    texInfo.lostFragments += (n - 1);
                 }
                 if (Clash3x3(mb, i, j, width, height))
-                    mipInfo.fragmentClashes++;
+                    texInfo.fragmentClashes++;
 
-                if (kernelMask &= BitClear)
-                    mipInfo.boundaryFragments++;
+                if (checkMask &= BitClear)
+                    texInfo.boundaryFragments++;
             } else {
-                if (kernelMask &= BitSet)
-                    mipInfo.totalFragments_bilinear++;
+                if (checkMask &= BitSet)
+                    texInfo.totalFragments_bilinear++;
             }
         }
     }
@@ -479,46 +512,55 @@ static TexImageInfo ComputeTexImageInfo(Mesh& m, const std::vector<Mesh::FacePoi
     glDeleteProgram(program);
     glDeleteVertexArrays(1, &vao);
 
-    return mipInfo;
+    return texInfo;
 }
 
-static std::string JSONField(const char *fname, int fval, int ident = 0)
+static std::string JSONField(const char *fname, int fval, int indentation = 0)
 {
     std::stringstream ss;
-    while (ident-- > 0)
+    while (indentation-- > 0)
         ss << "  ";
     ss << "\"" << fname << "\": " << fval;
     return ss.str();
 }
 
-static std::string JSONField(const char *fname, double fval, int ident = 0)
+static std::string JSONField(const char *fname, bool fval, int indentation = 0)
 {
     std::stringstream ss;
-    while (ident-- > 0)
+    while (indentation-- > 0)
+        ss << "  ";
+    ss << "\"" << fname << "\": " << (fval ? "true" : "false");
+    return ss.str();
+}
+
+static std::string JSONField(const char *fname, double fval, int indentation = 0)
+{
+    std::stringstream ss;
+    while (indentation-- > 0)
         ss << "  ";
     ss << "\"" << fname << "\": " << fval;
     return ss.str();
 }
 
-static std::string ToJSON(const TexImageInfo& tii, int ident = 0)
+static std::string ToJSON(const TexImageInfo& tii, int indentation = 0)
 {
     std::stringstream ss;
 
-    int ii = ident;
+    int ii = indentation;
     while (ii-- > 0)
         ss << "  ";
     ss << "{" << std::endl;
 
-    ss << JSONField("rw"                     , tii.w,                       ident + 1) << "," << std::endl;
-    ss << JSONField("rh"                     , tii.h,                       ident + 1) << "," << std::endl;
-    ss << JSONField("totalFragments"         , tii.totalFragments,          ident + 1) << "," << std::endl;
-    ss << JSONField("totalFragments_bilinear", tii.totalFragments_bilinear, ident + 1) << "," << std::endl;
-    ss << JSONField("overwrittenFragments"   , tii.overwrittenFragments,    ident + 1) << "," << std::endl;
-    ss << JSONField("lostFragments"          , tii.lostFragments,           ident + 1) << "," << std::endl;
-    ss << JSONField("fragmentClashes"        , tii.fragmentClashes,         ident + 1) << "," << std::endl;
-    ss << JSONField("boundaryFragments"      , tii.boundaryFragments,       ident + 1) << std::endl;
+    ss << JSONField("rw"                     , tii.w,                       indentation + 1) << "," << std::endl;
+    ss << JSONField("rh"                     , tii.h,                       indentation + 1) << "," << std::endl;
+    ss << JSONField("totalFragments"         , tii.totalFragments,          indentation + 1) << "," << std::endl;
+    ss << JSONField("totalFragments_bilinear", tii.totalFragments_bilinear, indentation + 1) << "," << std::endl;
+    ss << JSONField("overwrittenFragments"   , tii.overwrittenFragments,    indentation + 1) << "," << std::endl;
+    ss << JSONField("lostFragments"          , tii.lostFragments,           indentation + 1) << "," << std::endl;
+    ss << JSONField("fragmentClashes"        , tii.fragmentClashes,         indentation + 1) << "," << std::endl;
+    ss << JSONField("boundaryFragments"      , tii.boundaryFragments,       indentation + 1) << std::endl;
 
-    ii = ident;
+    ii = indentation;
     while (ii-- > 0)
         ss << "  ";
     ss << "}";
@@ -526,11 +568,11 @@ static std::string ToJSON(const TexImageInfo& tii, int ident = 0)
     return ss.str();
 }
 
-static std::string JSONField(const char *fname, const std::vector<TexImageInfo>& vt, int ident = 0)
+static std::string JSONField(const char *fname, const std::vector<TexImageInfo>& vt, int indentation = 0)
 {
     std::stringstream ss;
 
-    int ii = ident;
+    int ii = indentation;
     while (ii-- > 0)
         ss << "  ";
     ss << "\"" << fname << "\": [" << std::endl;
@@ -538,11 +580,11 @@ static std::string JSONField(const char *fname, const std::vector<TexImageInfo>&
     for (std::size_t i = 0; i < vt.size(); ++i) {
         if (i > 0)
             ss << "," << std::endl;
-        ss << ToJSON(vt[i], ident + 1);
+        ss << ToJSON(vt[i], indentation + 1);
     }
 
     ss << std::endl;
-    ii = ident;
+    ii = indentation;
     while (ii-- > 0)
         ss << "  ";
     ss << "]";
@@ -550,11 +592,11 @@ static std::string JSONField(const char *fname, const std::vector<TexImageInfo>&
     return ss.str();
 }
 
-static std::string JSONField(const char *fname, const std::vector<std::string>& vs, int ident = 0)
+static std::string JSONField(const char *fname, const std::vector<std::string>& vs, int indentation = 0)
 {
     std::stringstream ss;
 
-    int ii = ident;
+    int ii = indentation;
     while (ii-- > 0)
         ss << "  ";
     std::string ws = ss.str();
@@ -567,7 +609,7 @@ static std::string JSONField(const char *fname, const std::vector<std::string>& 
     }
 
     ss << std::endl;
-    ii = ident;
+    ii = indentation;
     while (ii-- > 0)
         ss << "  ";
     ss << "]";
@@ -575,10 +617,10 @@ static std::string JSONField(const char *fname, const std::vector<std::string>& 
     return ss.str();
 }
 
-static std::string JSONField(const char *fname, const char *str, int ident = 0)
+static std::string JSONField(const char *fname, const char *str, int indentation = 0)
 {
     std::stringstream ss;
-    while (ident-- > 0)
+    while (indentation-- > 0)
         ss << "  ";
     ss << "\"" << fname << "\": \"" << str << "\"";
     return ss.str();
@@ -586,22 +628,31 @@ static std::string JSONField(const char *fname, const char *str, int ident = 0)
 
 void WriteJSON(const std::string& filename, const Mesh& m, const MeshInfo& minfo, AtlasInfo &ainfo)
 {
-
     // write all the stats to a json object
-    std::ofstream json(filename + ".json");
+    std::ofstream json(filename);
+    if (!json.is_open()) {
+        std::cerr << "Error opening file " << filename << ": " << std::strerror(errno) << std::endl;
+        std::exit(-1);
+    }
 
     json << "{" << std::endl;
-    json << JSONField("mesh"                , m.name.c_str(),    1)    << "," << std::endl;
+
+    json << JSONField("mesh"                , m.name.c_str(),     1)    << "," << std::endl;
     json << JSONField("fn"                  , minfo.fn,           1)    << "," << std::endl;
     json << JSONField("vn"                  , minfo.vn,           1)    << "," << std::endl;
     json << JSONField("en"                  , minfo.en,           1)    << "," << std::endl;
     json << JSONField("en_b"                , minfo.en_b,         1)    << "," << std::endl;
-    json << JSONField("en_seam"             , ainfo.en_seam,      1)    << "," << std::endl;
+    json << JSONField("en_uv"               , ainfo.en_uv,        1)    << "," << std::endl;
+    json << JSONField("en_uv_b"             , ainfo.en_uv_b,      1)    << "," << std::endl;
     json << JSONField("nonmanif_edge"       , minfo.nme,          1)    << "," << std::endl;
     json << JSONField("nonmanif_vert"       , minfo.nmv,          1)    << "," << std::endl;
     json << JSONField("connected_components", minfo.cc ,          1)    << "," << std::endl;
     json << JSONField("boundary_loops"      , minfo.bl ,          1)    << "," << std::endl;
     json << JSONField("genus"               , minfo.g  ,          1)    << "," << std::endl;
+    json << JSONField("fnzero"              , minfo.fnzero,       1)    << "," << std::endl;
+    json << JSONField("vnunref"             , minfo.vnunref,      1)    << "," << std::endl;
+    json << JSONField("oriented"            , minfo.oriented,     1)    << "," << std::endl;
+    json << JSONField("orientable"          , minfo.orientable,   1)    << "," << std::endl;
     json << JSONField("num_charts"          , ainfo.nc ,          1)    << "," << std::endl;
     json << JSONField("num_null_charts"     , ainfo.nnc,          1)    << "," << std::endl;
     json << JSONField("mapped_fraction"     , ainfo.mpa,          1)    << "," << std::endl;
@@ -646,7 +697,7 @@ void WriteJSON(const std::string& filename, const Mesh& m, const MeshInfo& minfo
     json << JSONField("sf_avg"   , ainfo.sfDistrib.Avg(), 1)                << "," << std::endl;
     json << JSONField("sf_rms"   , ainfo.sfDistrib.RMS(), 1)                << "," << std::endl;
     json << JSONField("sf_var"   , ainfo.sfDistrib.Variance(), 1)           << "," << std::endl;
-    json << JSONField("sf_stddev", ainfo.sfDistrib.StandardDeviation(), 1)  << "," << std::endl;
+    json << JSONField("sf_stddev", ainfo.sfDistrib.StandardDeviation(), 1)  << std::endl;
 
     json << "}" << std::endl;
 

@@ -3,6 +3,7 @@
 #include "measure.h"
 
 #include <wrap/io_trimesh/import.h>
+#include <wrap/system/qgetopt.h>
 
 #include <vcg/complex/algorithms/parametrization/distortion.h>
 #include <vcg/complex/algorithms/attribute_seam.h>
@@ -34,7 +35,7 @@ static bool LoadMesh(Mesh &m, const char *filename, int &loadmask)
         return false;
     }
 
-    m.name = fi.absoluteFilePath().toStdString();
+    m.name = fi.fileName().toStdString();
 
     QString wd = QDir::currentPath();
     QDir::setCurrent(fi.absoluteDir().absolutePath());
@@ -61,34 +62,33 @@ static bool LoadMesh(Mesh &m, const char *filename, int &loadmask)
         ntex++;
     }
 
-    // make sure the uv coords are anchored at (0,0)
+    // if necessary, recenter uv box
     std::unordered_map<short, vcg::Box2d> uvbb;
     for (auto& f : m.face) {
         for (int i = 0; i < 3; ++i)
             uvbb[f.WT(i).N()].Add(f.WT(i).P());
     }
+
     for (auto& f : m.face) {
-        vcg::Point2d offset = uvbb[f.WT(0).N()].min;
+        double offsetU = 0;
+        double offsetV = 0;
+        vcg::Box2d box = uvbb[f.WT(0).N()];
+        if (box.min.X() < 0 || box.min.Y() < 0 || box.max.X() > 1 || box.max.Y() > 1) {
+            vcg::Point2d anchor = box.min + (box.min - box.max) * 0.002;
+            offsetU = -anchor.X();
+            offsetV = -anchor.Y();
+        }
         for (int i = 0; i < 3; ++i) {
-            f.WT(i).U() -= std::floor(offset.X());
-            f.WT(i).V() -= std::floor(offset.Y());
+            f.WT(i).U() += offsetU;
+            f.WT(i).V() += offsetV;
         }
     }
 
     assert(ntex == (int) m.texsizes.size());
 
-    for (auto& f : m.face) {
-        int ti = f.WT(0).N();
-        for (int i = 0; i < f.VN(); ++i) {
-            f.WT(i).P().X() *= (ti < ntex) ? m.texsizes[ti].w : 1;
-            f.WT(i).P().Y() *= (ti < ntex) ? m.texsizes[ti].h : 1;
-        }
-    }
-
     QDir::setCurrent(wd);
     return true;
 }
-
 
 using namespace vcg;
 
@@ -171,23 +171,102 @@ void GenerateAtlas(Mesh &m, std::vector<Chart>& atlas)
     }
 }
 
+void ParseTextureSize(const QString& texsize, int *w, int *h)
+{
+    bool ok;
+
+    auto it = texsize.begin();
+    while (it != texsize.end() && it->isDigit())
+        it++;
+
+    *w = texsize.mid(0, it - texsize.begin()).toInt(&ok, 10);
+    if (!ok) {
+        *w = *h = -1;
+        return;
+    }
+
+    if (it != texsize.end() && *it == 'x')
+        it++;
+
+    *h = texsize.mid(it - texsize.begin()).toInt(&ok, 10);
+    if (!ok) {
+        *w = *h = -1;
+        return;
+    }
+
+    return;
+}
+
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
-    
+
+    QString json = "texmetro.json";
+    QString texsize = "";
+    int w = -1;
+    int h = -1;
+
+    GetOpt opt(argc, argv);
+    opt.setHelp("ARGS specifies the 3D model used to compute the measures (the "
+                "model is required to be UV mapped). Since some of the measures "
+                "computed are sensitive to the texture size, the model should "
+                "also include a texture file. For 3D models without textures it "
+                "is possible to specify the texture size as an optional argument.");
+
+    opt.allowUnlimitedArguments(true);
+
+    opt.addOption('j', "json", "name of the output json file", &json);
+    opt.addOption('t', "texsize", "size of the texture file (eg 1024x512) if the model has none", &texsize);
+
+    opt.parse();
+
+    if (texsize != "") {
+        ParseTextureSize(texsize, &w, &h);
+        if (w == -1 || h == -1) {
+            std::cerr << "Error while parsing the texture size argument " << texsize.toStdString() << std::endl;
+            std::exit(-1);
+        }
+    }
+
+    std::string object;
+
+    QStringList arglist = opt.arguments;
+    if (arglist.size() < 1) {
+        std::cerr << qPrintable(opt.usage()) << std::endl;
+        std::exit(-1);
+    } else {
+        object = arglist[0].toStdString();
+    }
+
     Mesh m;
     int loadmask;
 
-    if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " obj" << std::endl;
-        std::exit(-1);
-    }
-    
-    std::cout << "Running texmetro on " << argv[1] << std::endl;
+    std::cout << "Running texmetro on " << object << std::endl;
 
     if (LoadMesh(m, argv[1], loadmask) == false) {
-        std::cerr << "Failed to open mesh " << argv[1] << std::endl;
+        std::cerr << "Failed to open mesh " << object << std::endl;
         std::exit(-1);
+    }
+
+    if (m.texsizes.size() == 0) {
+        if (w > 0 && h > 0) {
+            m.texsizes.push_back({w, h});
+            for (auto& f : m.face)
+                for (int i = 0; i < 3; ++i)
+                    f.WT(i).N() = 0;
+            m.textures.push_back("N/A");
+        } else {
+            std::cerr << "Model has no textures and no texsize option was specified, aborting" << std::endl;
+            std::exit(-1);
+        }
+    }
+
+    for (auto& f : m.face) {
+        int ti = f.WT(0).N();
+        for (int i = 0; i < f.VN(); ++i) {
+            f.WT(i).P().X() *= m.texsizes[ti].w;
+            f.WT(i).P().Y() *= m.texsizes[ti].h;
+        }
     }
 
     assert(loadmask & tri::io::Mask::IOM_WEDGTEXCOORD);
@@ -197,15 +276,16 @@ int main(int argc, char *argv[])
     std::vector<Chart> atlas;
     GenerateAtlas(m, atlas);
 
-    AtlasInfo ainfo = ComputeAtlasInfo(m, atlas, minfo);
+    AtlasInfo ainfo = ComputeAtlasInfo(m, atlas);
 
     std::cout << std::endl;
     std::cout << "Mesh geometry" << std::endl;
     std::cout << "  fn " << minfo.fn << std::endl;
     std::cout << "  vn " << minfo.vn << std::endl;
     std::cout << "  en " << minfo.en << std::endl;
-    std::cout << "  en_boundary " << minfo.en_b << std::endl;
-    std::cout << "  en_seam " << ainfo.en_seam << std::endl;
+    std::cout << "  en_b " << minfo.en_b << std::endl;
+    std::cout << "  en_uv " << ainfo.en_uv << std::endl;
+    std::cout << "  en_uv_b " << ainfo.en_uv_b << std::endl;
     std::cout << "  nme " << minfo.nme << std::endl;
     std::cout << "  nmv " << minfo.nmv << std::endl;
     std::cout << "  cc " << minfo.cc << std::endl;
@@ -218,7 +298,7 @@ int main(int argc, char *argv[])
     std::cout << "  mapped_area " << ainfo.mpa << std::endl;
     std::cout << "  nfolds " << ainfo.nfolds << std::endl;
     std::cout << "  texture_occupancy " << ainfo.occupancy << std::endl;
-    std::cout << "  ntex" << ainfo.mipTextureInfo.size() << std::endl;
+    std::cout << "  ntex " << ainfo.mipTextureInfo.size() << std::endl;
 
     std::cout << std::endl;
     std::cout << "  Texture name                       Resolution    Occupancy     Overlap       MIP-index" << std::endl;
@@ -257,7 +337,7 @@ int main(int argc, char *argv[])
     }
     std::cout.setf(std::ios::right);
 
-    WriteJSON("out", m, minfo, ainfo);
+    WriteJSON(json.toStdString(), m, minfo, ainfo);
 
     return 0;
 }

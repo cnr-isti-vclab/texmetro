@@ -25,7 +25,7 @@ struct MeshUsedTypes : public vcg::UsedTypes<vcg::Use<MeshVertex>::AsVertexType,
 {
 };
 
-class MeshVertex : public vcg::Vertex<MeshUsedTypes, vcg::vertex::Coord3d, vcg::vertex::TexCoord2d, vcg::vertex::Normal3d, vcg::vertex::BitFlags>
+class MeshVertex : public vcg::Vertex<MeshUsedTypes, vcg::vertex::Coord3d, vcg::vertex::TexCoord2d, vcg::vertex::Normal3d, vcg::vertex::Color4b, vcg::vertex::BitFlags>
 {
 };
 
@@ -35,7 +35,7 @@ public:
     unsigned cid = INVALID_ID;
 };
 
-class MeshEdge : public vcg::Edge<MeshUsedTypes>
+class MeshEdge : public vcg::Edge<MeshUsedTypes, vcg::edge::VertexRef, vcg::edge::BitFlags>
 {
 };
 
