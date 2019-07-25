@@ -6,8 +6,6 @@
 
 #include <GL/glew.h>
 
-void GLInit();
-void GLTerminate();
 void CheckGLError();
 GLuint CompileShaders(const GLchar **vs_text, const GLchar **fs_text);
 

@@ -7,27 +7,6 @@
 #include <memory>
 #include <cstring>
 
-#include <GLFW/glfw3.h>
-
-static void ErrorCallback(int error, const char *message)
-{
-    std::cerr << "GLFW error: " << message << " (code " << error << ")" << std::endl;
-}
-
-void GLInit()
-{
-    if (!glfwInit()) {
-        std::cerr << "Failed to initialize GLFW" << std::endl;
-        exit(-1);
-    }
-    glfwSetErrorCallback(ErrorCallback);
-}
-
-void GLTerminate()
-{
-    glfwTerminate();
-}
-
 void CheckGLError()
 {
     GLenum error = glGetError();

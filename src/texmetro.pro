@@ -11,7 +11,7 @@ TARGET = texmetro
 #### QT STUFF ##################################################################
 
 TEMPLATE = app
-QT = core gui
+QT = core gui opengl
 
 
 
@@ -25,23 +25,17 @@ INCLUDEPATH += $$VCGPATH $$VCGPATH/eigenlib
 
 unix {
   CONFIG += link_pkgconfig
-  PKGCONFIG += glfw3 glew
+  PKGCONFIG += glew
   LIBS += -lGL -lGLEW
 }
 
 win32 {
-  WIN_GLFW_PATH = $$PWD/glfw       # set to glfw dir
   WIN_GLEW_PATH = $$PWD/glew       # set to glew dir
-
-  DEFINES += GLFW_DLL
-  INCLUDEPATH += $$WIN_GLFW_PATH/include
-  LIBS += -L$$WIN_GLFW_PATH/lib-vc2015 -lglfw3dll
 
   INCLUDEPATH += $$WIN_GLEW_PATH/include
   LIBS += -L$$WIN_GLEW_PATH/lib/Release/x64 -lglew32
 
   LIBS += -lopengl32
-
 }
 
 

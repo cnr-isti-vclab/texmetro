@@ -3,7 +3,10 @@
 #include "gl_utils.h"
 
 #include <GL/glew.h>
-#include <GLFW/glfw3.h>
+
+#include <QSurfaceFormat>
+#include <QOpenGLContext>
+#include <QOffscreenSurface>
 
 #include <fstream>
 
@@ -288,23 +291,34 @@ static TexImageInfo ComputeTexImageInfo(Mesh& m, const std::vector<Mesh::FacePoi
     (void) m;
     assert(sizeof(unsigned) == 4);
 
-    // Create a hidden window
-    GLFWwindow *parentWindow = glfwGetCurrentContext();
-    bool sharedContext = (parentWindow != nullptr);
+    QSurfaceFormat format;
+    format.setVersion(4, 2);
+    format.setProfile(QSurfaceFormat::OpenGLContextProfile::CoreProfile);
+    format.setSwapBehavior(QSurfaceFormat::SwapBehavior::SingleBuffer);
 
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    QOpenGLContext context;
+    context.setFormat(format);
 
-    GLFWwindow *window = glfwCreateWindow(512, 512, "Window", nullptr, parentWindow);
-    if (!window)
-    {
-        std::cerr << "Failed to create window or context" << std::endl;
-        std::exit(-1);
+    if (!context.create()) {
+        std::cerr << "Failed to create opengl context" << std::endl;
     }
-    glfwMakeContextCurrent(window);
+
+    {
+        QSurfaceFormat f = context.format();
+        if (f.majorVersion() != format.majorVersion() || f.minorVersion() != f.minorVersion()) {
+            std::cerr << "Warning: Could not create OpenGL context with version "
+                      << format.majorVersion() << "." << format.minorVersion() << std::endl;
+        }
+        if (format.profile() != QSurfaceFormat::OpenGLContextProfile::CoreProfile){
+            std::cerr << "Warniing: Core OpenGL profile not available" << std::endl;
+        }
+    }
+
+    QOffscreenSurface surface;
+    surface.setFormat(context.format());
+    surface.create();
+
+    context.makeCurrent(&surface);
 
     glewExperimental = GL_TRUE;
     GLenum err = glewInit();
@@ -314,9 +328,6 @@ static TexImageInfo ComputeTexImageInfo(Mesh& m, const std::vector<Mesh::FacePoi
         std::exit(-1);
     }
     glGetError();
-
-    int fbw, fbh;
-    glfwGetFramebufferSize(window, &fbw, &fbh);
 
     GLuint vao;
     glGenVertexArrays(1, &vao);
@@ -409,7 +420,6 @@ static TexImageInfo ComputeTexImageInfo(Mesh& m, const std::vector<Mesh::FacePoi
     glDrawBuffer(GL_COLOR_ATTACHMENT0);
 
     glClear(GL_COLOR_BUFFER_BIT);
-    glfwPollEvents();
 
     glDrawArrays(GL_TRIANGLES, 0, faces.size()*3);
 
@@ -455,8 +465,6 @@ static TexImageInfo ComputeTexImageInfo(Mesh& m, const std::vector<Mesh::FacePoi
         }
     }
 
-    glfwPollEvents();
-
     delete [] sb;
     delete [] mb;
 
@@ -470,12 +478,6 @@ static TexImageInfo ComputeTexImageInfo(Mesh& m, const std::vector<Mesh::FacePoi
     glDeleteTextures(1, &tex_id);
     glDeleteProgram(program);
     glDeleteVertexArrays(1, &vao);
-
-    glfwDestroyWindow(window);
-
-    if (sharedContext) {
-        glfwMakeContextCurrent(parentWindow);
-    }
 
     return mipInfo;
 }

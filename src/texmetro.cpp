@@ -12,7 +12,7 @@
 #include <iostream>
 #include <iomanip>
 
-#include <QCoreApplication>
+#include <QApplication>
 #include <QImageReader>
 #include <QDir>
 #include <QFileInfo>
@@ -173,14 +173,8 @@ void GenerateAtlas(Mesh &m, std::vector<Chart>& atlas)
 
 int main(int argc, char *argv[])
 {
-    // Make sure the executable directory is added to Qt's library path
-    {
-        QFileInfo executableInfo(argv[0]);
-        QCoreApplication::addLibraryPath(executableInfo.dir().absolutePath());
-    }
+    QApplication app(argc, argv);
     
-    GLInit();
-
     Mesh m;
     int loadmask;
 
@@ -264,8 +258,6 @@ int main(int argc, char *argv[])
     std::cout.setf(std::ios::right);
 
     WriteJSON("out", m, minfo, ainfo);
-
-    GLTerminate();
 
     return 0;
 }
