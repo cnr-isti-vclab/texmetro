@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 #include <iostream>
-#include <unordered_map>
+#include <iomanip>
 
 #include <QCoreApplication>
 #include <QImageReader>
@@ -224,6 +224,44 @@ int main(int argc, char *argv[])
     std::cout << "  mapped_area " << ainfo.mpa << std::endl;
     std::cout << "  nfolds " << ainfo.nfolds << std::endl;
     std::cout << "  texture_occupancy " << ainfo.occupancy << std::endl;
+    std::cout << "  ntex" << ainfo.mipTextureInfo.size() << std::endl;
+
+    std::cout << std::endl;
+    std::cout << "  Texture name                       Resolution    Occupancy     Overlap       MIP-index" << std::endl;
+    std::cout << "  --------------------------------------------------------------------------------------" << std::endl;
+    std::cout.setf(std::ios::left);
+
+    for (auto& mti : ainfo.mipTextureInfo) {
+        int ti = &mti - &ainfo.mipTextureInfo[0];
+        for (unsigned k = 0; k < mti.size(); ++k) {
+            if (mti[k].totalFragments > 0) {
+                std::string tname = m.textures[ti];
+                if (tname.length() > 32) {
+                    tname = tname.substr(0, 32);
+                    tname[29] = tname[30] = tname[31] = '.';
+                }
+
+                std::string tres = std::to_string(m.texsizes[ti].w) + "x" + std::to_string(m.texsizes[ti].h);
+                std::string tocc = std::to_string((mti[k].totalFragments - mti[k].lostFragments) / (double) (mti[k].w * mti[k].h));
+                std::string tover = std::to_string(mti[k].overwrittenFragments / (double) (mti[k].totalFragments - mti[k].lostFragments));
+                unsigned lmip = k;
+                for (; lmip < mti.size(); ++lmip)
+                    if (mti[lmip].fragmentClashes > 0)
+                        break;
+
+                std::cout << "  " << std::setw(32) << tname;
+                std::cout << "   " << std::setw(11) << tres;
+                std::cout << "   " << std::setw(11) << tocc;
+                std::cout << "   " << std::setw(11) << tover;
+                std::cout << "   " << std::setw(11) << lmip;
+
+                std::cout << std::endl;
+
+                break;
+            }
+        }
+    }
+    std::cout.setf(std::ios::right);
 
     WriteJSON("out", m, minfo, ainfo);
 

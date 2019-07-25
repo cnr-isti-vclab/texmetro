@@ -524,7 +524,7 @@ static std::string ToJSON(const TexImageInfo& tii, int ident = 0)
     return ss.str();
 }
 
-static std::string JSONField(const char *fname, const std::vector<TexImageInfo>& vs, int ident = 0)
+static std::string JSONField(const char *fname, const std::vector<TexImageInfo>& vt, int ident = 0)
 {
     std::stringstream ss;
 
@@ -533,10 +533,35 @@ static std::string JSONField(const char *fname, const std::vector<TexImageInfo>&
         ss << "  ";
     ss << "\"" << fname << "\": [" << std::endl;
 
+    for (std::size_t i = 0; i < vt.size(); ++i) {
+        if (i > 0)
+            ss << "," << std::endl;
+        ss << ToJSON(vt[i], ident + 1);
+    }
+
+    ss << std::endl;
+    ii = ident;
+    while (ii-- > 0)
+        ss << "  ";
+    ss << "]";
+
+    return ss.str();
+}
+
+static std::string JSONField(const char *fname, const std::vector<std::string>& vs, int ident = 0)
+{
+    std::stringstream ss;
+
+    int ii = ident;
+    while (ii-- > 0)
+        ss << "  ";
+    std::string ws = ss.str();
+    ss << "\"" << fname << "\": [" << std::endl;
+
     for (std::size_t i = 0; i < vs.size(); ++i) {
         if (i > 0)
             ss << "," << std::endl;
-        ss << ToJSON(vs[i], ident + 1);
+        ss << ws << "  \"" << vs[i] << "\"";
     }
 
     ss << std::endl;
@@ -581,6 +606,7 @@ void WriteJSON(const std::string& filename, const Mesh& m, const MeshInfo& minfo
     json << JSONField("nfolds"              , ainfo.nfolds,       1)    << "," << std::endl;
     json << JSONField("occupancy"           , ainfo.occupancy,    1)    << "," << std::endl;
     json << JSONField("ntex"                , (int) ainfo.mipTextureInfo.size(), 1) << "," << std::endl;
+    json << JSONField("textures"            , m.textures,                        1) << "," << std::endl;
 
     for (std::size_t ntex = 0; ntex < ainfo.mipTextureInfo.size(); ntex++) {
         std::stringstream ss;
