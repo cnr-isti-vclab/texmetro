@@ -63,8 +63,12 @@ using namespace vcg;
 MeshInfo ComputeMeshInfo(Mesh& m)
 {
     tri::UpdateTopology<Mesh>::FaceFace(m);
+    tri::UpdateBounding<Mesh>::Box(m);
 
-    MeshInfo minfo;
+    double maxBoxDim = m.bbox.Dim()[m.bbox.MaxDim()];
+    double normalizationFactor = 1.0 / maxBoxDim;
+
+    MeshInfo minfo = {};
 
     minfo.fn = m.FN();
     minfo.vn = m.VN();
@@ -72,38 +76,56 @@ MeshInfo ComputeMeshInfo(Mesh& m)
     tri::Clean<Mesh>::CountEdgeNum(m, minfo.en, minfo.en_b, minfo.nme);
 
 
+    minfo.vnunref = tri::Clean<Mesh>::CountUnreferencedVertex(m);
     minfo.nmv = tri::Clean<Mesh>::CountNonManifoldVertexFF(m);
-    minfo.cc = tri::Clean<Mesh>::CountConnectedComponents(m);
-    minfo.bl = -1;
-    minfo.g = -1;
-    if (minfo.nmv + minfo.nme == 0) {
-        minfo.bl = tri::Clean<Mesh>::CountHoles(m);
-        minfo.g = tri::Clean<Mesh>::MeshGenus(m);
-    }
 
-    minfo.bnd_len = 0;
+    // count duplicate faces
+    typedef tri::Clean<Mesh>::SortedTriple Triplet;
+    std::vector<Triplet> tvec;
     for (auto& f : m.face) {
-        for (int i = 0; i < 3; ++i) {
-            if (face::IsBorder(f, i))
-                minfo.bnd_len += DistortionWedge::EdgeLenght3D(&f, i);
-        }
+        tvec.push_back(Triplet(tri::Index(m, f.V(0)), tri::Index(m, f.V(1)), tri::Index(m, f.V(2)), &f));
     }
+    std::sort(tvec.begin(), tvec.end());
+    auto it = std::unique(tvec.begin(), tvec.end());
+    minfo.fndup = minfo.fn - (it - tvec.begin());
 
+    // count zero-area faces
     minfo.fnzero = 0;
     for (auto& f : m.face) {
         if (DistortionWedge::Area3D(&f) <= 0)
             minfo.fnzero++;
     }
 
+    minfo.cc = tri::Clean<Mesh>::CountConnectedComponents(m);
+    minfo.g = -1;
+    minfo.bl = -1;
+    if (minfo.nmv + minfo.nme == 0) {
+        minfo.bl = tri::Clean<Mesh>::CountHoles(m);
+        minfo.g = tri::Clean<Mesh>::MeshGenus(m.vn - minfo.vnunref, minfo.en, m.fn, minfo.bl, minfo.cc);
+    }
+    minfo.area = 0;
+    minfo.bnd_len = 0;
+    for (auto& f : m.face) {
+        minfo.area += DistortionWedge::Area3D(&f);
+        for (int i = 0; i < 3; ++i) {
+            if (face::IsBorder(f, i))
+                minfo.bnd_len += DistortionWedge::EdgeLenght3D(&f, i);
+        }
+    }
+
+    minfo.area_normalized = minfo.area * std::pow(normalizationFactor, 2.0);
+    minfo.bnd_len_normalized = minfo.bnd_len * normalizationFactor;
+
     tri::Clean<Mesh>::OrientCoherentlyMesh(m, minfo.oriented, minfo.orientable);
     tri::UpdateTopology<Mesh>::FaceFace(m);
-    minfo.vnunref = tri::Clean<Mesh>::CountUnreferencedVertex(m);
 
     return minfo;
 }
 
 AtlasInfo ComputeAtlasInfo(Mesh& m, const std::vector<Chart>& atlas)
 {
+    tri::UpdateTopology<Mesh>::FaceFace(m);
+
     AtlasInfo ainfo = {};
 
     // count seams in uv space
@@ -135,19 +157,29 @@ AtlasInfo ComputeAtlasInfo(Mesh& m, const std::vector<Chart>& atlas)
 
     ainfo.mpa = mappedArea3D / totalArea3D;
 
+    ainfo.area = 0;
+    ainfo.bnd_len = 0;
+    for (auto& f : m.face) {
+        ainfo.area += std::abs(fUV[tri::Index(m, f)]);
+        for (int i = 0; i < 3; ++i) {
+            if (face::IsBorder(f, i))
+                ainfo.bnd_len += DistortionWedge::EdgeLenghtUV(&f, i);
+        }
+    }
+
     ainfo.nfolds = 0;
     for (auto& chart : atlas) {
         for (auto fp : chart.fpv) {
             int fi = tri::Index(m, fp);
-            if (std::signbit(fUV[fi]) != std::signbit(chart.areaUV)) {
+            if (std::signbit(fUV[fi]) != std::signbit(chart.signedAreaUV)) {
                 ainfo.nfolds++;
             }
         }
     }
 
-    // Histogram?
+    double globalScale = mappedAreaUV / mappedArea3D;
+
     {
-        double globalScale = mappedAreaUV / mappedArea3D;
         for (auto& f : m.face) {
             // quality is the texel allocation per face area
             int fi = tri::Index(m, f);
@@ -162,50 +194,70 @@ AtlasInfo ComputeAtlasInfo(Mesh& m, const std::vector<Chart>& atlas)
             }
         }
 
-        tri::Stat<Mesh>::ComputePerFaceQualityDistribution(m, ainfo.sfDistrib);
-
-        double sf_perc1 = ainfo.sfDistrib.Percentile(0.01);
-        double sf_perc99 = ainfo.sfDistrib.Percentile(0.99);
-
-        ainfo.sfDistrib.Clear();
-
+        ainfo.sf_areaAboveThreshold = 0;
+        tri::UpdateSelection<Mesh>::FaceClear(m);
         for (auto& f : m.face) {
-            if (f.Q() >= sf_perc1 && f.Q() <= sf_perc99)
-                ainfo.sfDistrib.Add(f.Q());
+            assert(std::isfinite(f.Q()));
+            if (f.Q() > 0) {
+                if (f.Q() < UV_SCALING_RATIO_MAX_THRESHOLD)
+                    f.SetS();
+                else
+                    ainfo.sf_areaAboveThreshold += f3D[tri::Index(m, f)];
+            }
         }
 
+        ainfo.sfHistogram.Clear();
+        ainfo.sfHistogram.SetRange(0, UV_SCALING_RATIO_MAX_THRESHOLD, 500000);
+        for (auto& f : m.face) {
+            if (f.IsS()) {
+                ainfo.sfHistogram.Add(f.Q(), DistortionWedge::Area3D(&f));
+            }
+        }
     }
 
-    ainfo.qcHist.Clear();
-    ainfo.qcHist.SetRange(1.0, 10.0, 1000);
     {
-        std::vector<double> qcv(m.FN(), std::numeric_limits<double>::max());
         for (auto& f : m.face) {
             int fi = tri::Index(m, f);
+            f.Q() = 0;
             if (f3D[fi] != 0 && fUV[fi] != 0) {
-                Eigen::Matrix2d jf = DistortionWedge::mappingTransform2D(f);
+                vcg::Point2d x10, x20;
+                LocalIsometry(f.P(1) - f.P(0), f.P(2) - f.P(0), x10, x20);
+                Eigen::Matrix2d jf = ComputeTransformationMatrix(x10, x20, f.WT(1).P() - f.WT(0).P(), f.WT(2).P() - f.WT(0).P());
+
+
+                //Eigen::Matrix2d jf = DistortionWedge::mappingTransform2D(f);
                 double bcplus  = std::pow(jf(0, 1) + jf(1, 0), 2.0);
                 double bcminus = std::pow(jf(0, 1) - jf(1, 0), 2.0);
                 double adplus  = std::pow(jf(0, 0) + jf(1, 1), 2.0);
                 double adminus = std::pow(jf(0, 0) - jf(1, 1), 2.0);
                 double s_min = 0.5 * std::abs(std::sqrt(bcplus + adminus) - std::sqrt(bcminus + adplus));
                 double s_max = 0.5 * (std::sqrt(bcplus + adminus) + std::sqrt(bcminus + adplus));
-                qcv[fi] = s_max / s_min;
-                if (std::isfinite(qcv[fi]))
-                    ainfo.qcHist.Add(qcv[fi], f3D[fi]);
+                if (s_max < s_min)
+                    std::swap(s_max, s_min);
+                double qcd = s_max / s_min;
+                assert(qcd >= 1);
+                if (std::isfinite(qcd))
+                    f.Q() = qcd;
             }
         }
 
-        double minPerc = ainfo.qcHist.Percentile(0.01);
-        double maxPerc = ainfo.qcHist.Percentile(0.99);
-
-        ainfo.qcHist.Clear();
-        ainfo.qcHist.SetRange(1.0, 10.0, 1000);
+        ainfo.qcd_areaAboveThreshold = 0;
+        tri::UpdateSelection<Mesh>::FaceClear(m);
         for (auto& f : m.face) {
-            int fi = tri::Index(m, f);
-            if (f3D[fi] != 0 && fUV[fi] != 0) {
-                if (std::isfinite(qcv[fi]) && (minPerc < qcv[fi]) && (maxPerc > qcv[fi]))
-                    ainfo.qcHist.Add(qcv[fi], f3D[fi]);
+            assert(std::isfinite(f.Q()));
+            if (f.Q() > 0) {
+                if (f.Q() < QUASI_CONFORMAL_DISTORTION_MAX_THRESHOLD)
+                    f.SetS();
+                else
+                    ainfo.qcd_areaAboveThreshold += f3D[tri::Index(m, f)];
+            }
+        }
+
+        ainfo.qcHistogram.Clear();
+        ainfo.qcHistogram.SetRange(0, QUASI_CONFORMAL_DISTORTION_MAX_THRESHOLD, 500000);
+        for (auto& f : m.face) {
+            if (f.IsS()) {
+                ainfo.qcHistogram.Add(f.Q(), DistortionWedge::Area3D(&f));
             }
         }
     }
@@ -213,18 +265,18 @@ AtlasInfo ComputeAtlasInfo(Mesh& m, const std::vector<Chart>& atlas)
     ainfo.mipTextureInfo = ComputeTexImageInfoAtMipLevels(m, atlas);
 
     // occupancy
-    long totalFragments = 0;
+    long availableFragments = 0;
     long usedFragments = 0;
     for (auto& v : ainfo.mipTextureInfo) {
         for (unsigned k = 0; k < v.size(); ++k) {
             if (v[k].totalFragments > 0) {
-                totalFragments += (v[k].w * v[k].h);
+                availableFragments += (v[k].w * v[k].h);
                 usedFragments += v[k].totalFragments - v[k].lostFragments;
                 break;
             }
         }
     }
-    ainfo.occupancy = usedFragments / (double) totalFragments;
+    ainfo.occupancy = usedFragments / (double) availableFragments;
 
     return ainfo;
 }
@@ -279,7 +331,7 @@ inline int Check3x3(unsigned *buffer, int row, int col, int width, int height)
     if (row == 0 || row == height - 1)
         mask |= BitClear;
     if (col == 0 || col == width - 1)
-        mask |= BitSet;
+        mask |= BitClear;
     for (int i = std::max(row-1, 0); i < std::min(row+2, height); ++i) {
         for (int j = std::max(col-1, 0); j < std::min(col+2, width); ++j) {
             if (buffer[i * width + j] == 0)
@@ -637,22 +689,32 @@ void WriteJSON(const std::string& filename, const Mesh& m, const MeshInfo& minfo
 
     json << "{" << std::endl;
 
-    json << JSONField("mesh"                , m.name.c_str(),     1)    << "," << std::endl;
-    json << JSONField("fn"                  , minfo.fn,           1)    << "," << std::endl;
-    json << JSONField("vn"                  , minfo.vn,           1)    << "," << std::endl;
-    json << JSONField("en"                  , minfo.en,           1)    << "," << std::endl;
-    json << JSONField("en_b"                , minfo.en_b,         1)    << "," << std::endl;
-    json << JSONField("en_uv"               , ainfo.en_uv,        1)    << "," << std::endl;
-    json << JSONField("en_uv_b"             , ainfo.en_uv_b,      1)    << "," << std::endl;
+    json << JSONField("mesh"                   , m.name.c_str(),           1)    << "," << std::endl;
+    json << JSONField("fn"                     , minfo.fn,                 1)    << "," << std::endl;
+    json << JSONField("vn"                     , minfo.vn,                 1)    << "," << std::endl;
+    json << JSONField("en"                     , minfo.en,                 1)    << "," << std::endl;
+    json << JSONField("en_b"                   , minfo.en_b,               1)    << "," << std::endl;
+    json << JSONField("area"                   , minfo.area,               1)    << "," << std::endl;
+    json << JSONField("boundary_len"           , minfo.bnd_len,            1)    << "," << std::endl;
+    json << JSONField("area_normalized"        , minfo.area_normalized,    1)    << "," << std::endl;
+    json << JSONField("boundary_len_normalized", minfo.bnd_len_normalized, 1)    << "," << std::endl;
+
+
+    json << JSONField("boundary_loops"      , minfo.bl ,          1)    << "," << std::endl;
     json << JSONField("nonmanif_edge"       , minfo.nme,          1)    << "," << std::endl;
     json << JSONField("nonmanif_vert"       , minfo.nmv,          1)    << "," << std::endl;
     json << JSONField("connected_components", minfo.cc ,          1)    << "," << std::endl;
-    json << JSONField("boundary_loops"      , minfo.bl ,          1)    << "," << std::endl;
     json << JSONField("genus"               , minfo.g  ,          1)    << "," << std::endl;
+    json << JSONField("fndup"               , minfo.fndup,        1)    << "," << std::endl;
     json << JSONField("fnzero"              , minfo.fnzero,       1)    << "," << std::endl;
     json << JSONField("vnunref"             , minfo.vnunref,      1)    << "," << std::endl;
     json << JSONField("oriented"            , minfo.oriented,     1)    << "," << std::endl;
     json << JSONField("orientable"          , minfo.orientable,   1)    << "," << std::endl;
+
+    json << JSONField("en_uv"               , ainfo.en_uv,        1)    << "," << std::endl;
+    json << JSONField("en_uv_b"             , ainfo.en_uv_b,      1)    << "," << std::endl;
+    json << JSONField("area_uv"             , ainfo.area,         1)    << "," << std::endl;
+    json << JSONField("boundary_len_uv"     , ainfo.bnd_len,      1)    << "," << std::endl;
     json << JSONField("num_charts"          , ainfo.nc ,          1)    << "," << std::endl;
     json << JSONField("num_null_charts"     , ainfo.nnc,          1)    << "," << std::endl;
     json << JSONField("mapped_fraction"     , ainfo.mpa,          1)    << "," << std::endl;
@@ -667,37 +729,39 @@ void WriteJSON(const std::string& filename, const Mesh& m, const MeshInfo& minfo
         json << JSONField(ss.str().c_str(), ainfo.mipTextureInfo[ntex], 1) << "," << std::endl;
     }
 
-    json << JSONField("qc_dist_perc1" , ainfo.qcHist.Percentile(0.01), 1)     << "," << std::endl;
-    json << JSONField("qc_dist_perc10", ainfo.qcHist.Percentile(0.10), 1)     << "," << std::endl;
-    json << JSONField("qc_dist_perc20", ainfo.qcHist.Percentile(0.20), 1)     << "," << std::endl;
-    json << JSONField("qc_dist_perc30", ainfo.qcHist.Percentile(0.30), 1)     << "," << std::endl;
-    json << JSONField("qc_dist_perc40", ainfo.qcHist.Percentile(0.40), 1)     << "," << std::endl;
-    json << JSONField("qc_dist_perc50", ainfo.qcHist.Percentile(0.50), 1)     << "," << std::endl;
-    json << JSONField("qc_dist_perc60", ainfo.qcHist.Percentile(0.60), 1)     << "," << std::endl;
-    json << JSONField("qc_dist_perc70", ainfo.qcHist.Percentile(0.70), 1)     << "," << std::endl;
-    json << JSONField("qc_dist_perc80", ainfo.qcHist.Percentile(0.80), 1)     << "," << std::endl;
-    json << JSONField("qc_dist_perc90", ainfo.qcHist.Percentile(0.90), 1)     << "," << std::endl;
-    json << JSONField("qc_dist_perc99", ainfo.qcHist.Percentile(0.99), 1)     << "," << std::endl;
-    json << JSONField("qc_dist_avg"   , ainfo.qcHist.Avg(), 1)                << "," << std::endl;
-    json << JSONField("qc_dist_rms"   , ainfo.qcHist.RMS(), 1)                << "," << std::endl;
-    json << JSONField("qc_dist_var"   , ainfo.qcHist.Variance(), 1)           << "," << std::endl;
-    json << JSONField("qc_dist_stddev", ainfo.qcHist.StandardDeviation(), 1)  << "," << std::endl;
+    json << JSONField("qcd_perc1" , ainfo.qcHistogram.Percentile(0.01), 1)    << "," << std::endl;
+    json << JSONField("qcd_perc10", ainfo.qcHistogram.Percentile(0.10), 1)    << "," << std::endl;
+    json << JSONField("qcd_perc20", ainfo.qcHistogram.Percentile(0.20), 1)    << "," << std::endl;
+    json << JSONField("qcd_perc30", ainfo.qcHistogram.Percentile(0.30), 1)    << "," << std::endl;
+    json << JSONField("qcd_perc40", ainfo.qcHistogram.Percentile(0.40), 1)    << "," << std::endl;
+    json << JSONField("qcd_perc50", ainfo.qcHistogram.Percentile(0.50), 1)    << "," << std::endl;
+    json << JSONField("qcd_perc60", ainfo.qcHistogram.Percentile(0.60), 1)    << "," << std::endl;
+    json << JSONField("qcd_perc70", ainfo.qcHistogram.Percentile(0.70), 1)    << "," << std::endl;
+    json << JSONField("qcd_perc80", ainfo.qcHistogram.Percentile(0.80), 1)    << "," << std::endl;
+    json << JSONField("qcd_perc90", ainfo.qcHistogram.Percentile(0.90), 1)    << "," << std::endl;
+    json << JSONField("qcd_perc99", ainfo.qcHistogram.Percentile(0.99), 1)    << "," << std::endl;
+    json << JSONField("qcd_avg"   , ainfo.qcHistogram.Avg(), 1)               << "," << std::endl;
+    json << JSONField("qcd_rms"   , ainfo.qcHistogram.RMS(), 1)               << "," << std::endl;
+    json << JSONField("qcd_var"   , ainfo.qcHistogram.Variance(), 1)          << "," << std::endl;
+    json << JSONField("qcd_stddev", ainfo.qcHistogram.StandardDeviation(), 1) << "," << std::endl;
+    json << JSONField("qcd_discardedArea", ainfo.qcd_areaAboveThreshold, 1) << "," << std::endl;
 
-    json << JSONField("sf_perc1" , ainfo.sfDistrib.Percentile(0.01), 1)     << "," << std::endl;
-    json << JSONField("sf_perc10", ainfo.sfDistrib.Percentile(0.10), 1)     << "," << std::endl;
-    json << JSONField("sf_perc20", ainfo.sfDistrib.Percentile(0.20), 1)     << "," << std::endl;
-    json << JSONField("sf_perc30", ainfo.sfDistrib.Percentile(0.30), 1)     << "," << std::endl;
-    json << JSONField("sf_perc40", ainfo.sfDistrib.Percentile(0.40), 1)     << "," << std::endl;
-    json << JSONField("sf_perc50", ainfo.sfDistrib.Percentile(0.50), 1)     << "," << std::endl;
-    json << JSONField("sf_perc60", ainfo.sfDistrib.Percentile(0.60), 1)     << "," << std::endl;
-    json << JSONField("sf_perc70", ainfo.sfDistrib.Percentile(0.70), 1)     << "," << std::endl;
-    json << JSONField("sf_perc80", ainfo.sfDistrib.Percentile(0.80), 1)     << "," << std::endl;
-    json << JSONField("sf_perc90", ainfo.sfDistrib.Percentile(0.90), 1)     << "," << std::endl;
-    json << JSONField("sf_perc99", ainfo.sfDistrib.Percentile(0.99), 1)     << "," << std::endl;
-    json << JSONField("sf_avg"   , ainfo.sfDistrib.Avg(), 1)                << "," << std::endl;
-    json << JSONField("sf_rms"   , ainfo.sfDistrib.RMS(), 1)                << "," << std::endl;
-    json << JSONField("sf_var"   , ainfo.sfDistrib.Variance(), 1)           << "," << std::endl;
-    json << JSONField("sf_stddev", ainfo.sfDistrib.StandardDeviation(), 1)  << std::endl;
+    json << JSONField("sf_perc1" , ainfo.sfHistogram.Percentile(0.01), 1)     << "," << std::endl;
+    json << JSONField("sf_perc10", ainfo.sfHistogram.Percentile(0.10), 1)     << "," << std::endl;
+    json << JSONField("sf_perc20", ainfo.sfHistogram.Percentile(0.20), 1)     << "," << std::endl;
+    json << JSONField("sf_perc30", ainfo.sfHistogram.Percentile(0.30), 1)     << "," << std::endl;
+    json << JSONField("sf_perc40", ainfo.sfHistogram.Percentile(0.40), 1)     << "," << std::endl;
+    json << JSONField("sf_perc50", ainfo.sfHistogram.Percentile(0.50), 1)     << "," << std::endl;
+    json << JSONField("sf_perc60", ainfo.sfHistogram.Percentile(0.60), 1)     << "," << std::endl;
+    json << JSONField("sf_perc70", ainfo.sfHistogram.Percentile(0.70), 1)     << "," << std::endl;
+    json << JSONField("sf_perc80", ainfo.sfHistogram.Percentile(0.80), 1)     << "," << std::endl;
+    json << JSONField("sf_perc90", ainfo.sfHistogram.Percentile(0.90), 1)     << "," << std::endl;
+    json << JSONField("sf_perc99", ainfo.sfHistogram.Percentile(0.99), 1)     << "," << std::endl;
+    json << JSONField("sf_avg"   , ainfo.sfHistogram.Avg(), 1)                << "," << std::endl;
+    json << JSONField("sf_rms"   , ainfo.sfHistogram.RMS(), 1)                << "," << std::endl;
+    json << JSONField("sf_var"   , ainfo.sfHistogram.Variance(), 1)           << "," << std::endl;
+    json << JSONField("sf_stddev", ainfo.sfHistogram.StandardDeviation(), 1)  << "," << std::endl;
+    json << JSONField("sf_discardedArea", ainfo.sf_areaAboveThreshold, 1)          << std::endl;
 
     json << "}" << std::endl;
 

@@ -54,11 +54,12 @@ struct Chart {
     std::vector<Mesh::FacePointer> fpv;
     double area3D;
     double areaUV;
+    double signedAreaUV;
     double boundary3D;
     double boundaryUV;
     int boundaryCount;
 
-    Chart(Mesh& m_, unsigned cid_, short sid_) : m{m_}, cid{cid_}, sid{sid_}, area3D{0}, areaUV{0}, boundary3D{0}, boundaryUV{0}, boundaryCount{0} {}
+    Chart(Mesh& m_, unsigned cid_, short sid_) : m{m_}, cid{cid_}, sid{sid_}, area3D{0}, areaUV{0}, signedAreaUV{0}, boundary3D{0}, boundaryUV{0}, boundaryCount{0} {}
 };
 
 

@@ -73,10 +73,10 @@ static bool LoadMesh(Mesh &m, const char *filename, int &loadmask)
         double offsetU = 0;
         double offsetV = 0;
         vcg::Box2d box = uvbb[f.WT(0).N()];
-        if (box.min.X() < 0 || box.min.Y() < 0 || box.max.X() > 1 || box.max.Y() > 1) {
-            vcg::Point2d anchor = box.min + (box.min - box.max) * 0.002;
-            offsetU = -anchor.X();
-            offsetV = -anchor.Y();
+        vcg::Point2d center = box.Center();
+        if (center.X() < 0 || center.X() > 1 || center.Y() < 0 || center.Y() > 1) {
+            offsetU = -std::floor(box.min.X()) + 1e-3;
+            offsetV = -std::floor(box.min.Y()) + 1e-3;
         }
         for (int i = 0; i < 3; ++i) {
             f.WT(i).U() += offsetU;
@@ -158,7 +158,8 @@ void GenerateAtlas(Mesh &m, std::vector<Chart>& atlas)
     for (auto& chart : atlas) {
         for (auto fp: chart.fpv) {
             chart.area3D += DistortionWedge::Area3D(fp);
-            chart.areaUV += DistortionWedge::AreaUV(fp);
+            chart.areaUV += std::abs(DistortionWedge::AreaUV(fp));
+            chart.signedAreaUV += DistortionWedge::AreaUV(fp);
             for (int i = 0; i < 3; ++i) {
                 if (face::IsBorder(*fp, i)) {
                     chart.boundary3D += DistortionWedge::EdgeLenght3D(fp, i);
@@ -284,20 +285,24 @@ int main(int argc, char *argv[])
     std::cout << "  vn " << minfo.vn << std::endl;
     std::cout << "  en " << minfo.en << std::endl;
     std::cout << "  en_b " << minfo.en_b << std::endl;
-    std::cout << "  en_uv " << ainfo.en_uv << std::endl;
-    std::cout << "  en_uv_b " << ainfo.en_uv_b << std::endl;
-    std::cout << "  nme " << minfo.nme << std::endl;
-    std::cout << "  nmv " << minfo.nmv << std::endl;
-    std::cout << "  cc " << minfo.cc << std::endl;
-    std::cout << "  bl " << minfo.bl << std::endl;
-    std::cout << "  g " << minfo.g << std::endl;
+    std::cout << "  area " << minfo.area << std::endl;
+    std::cout << "  boundary_len " << minfo.bnd_len << std::endl;
+    std::cout << "  boundary_loops " << minfo.bl << std::endl;
+    std::cout << "  nonmainf_edge " << minfo.nme << std::endl;
+    std::cout << "  nonmanif_vert " << minfo.nmv << std::endl;
+    std::cout << "  connected_components " << minfo.cc << std::endl;
+    std::cout << "  genus " << minfo.g << std::endl;
     std::cout << std::endl;
     std::cout << "Texture atlas" << std::endl;
-    std::cout << "  nc " << ainfo.nc << std::endl;
-    std::cout << "  nnc " << ainfo.nnc << std::endl;
-    std::cout << "  mapped_area " << ainfo.mpa << std::endl;
+    std::cout << "  en_uv " << ainfo.en_uv << std::endl;
+    std::cout << "  en_uv_b " << ainfo.en_uv_b << std::endl;
+    std::cout << "  area_uv " << minfo.area << std::endl;
+    std::cout << "  boundary_len_uv " << minfo.bnd_len << std::endl;
+    std::cout << "  num_charts " << ainfo.nc << std::endl;
+    std::cout << "  num_null_charts " << ainfo.nnc << std::endl;
+    std::cout << "  mapped_fraction " << ainfo.mpa << std::endl;
     std::cout << "  nfolds " << ainfo.nfolds << std::endl;
-    std::cout << "  texture_occupancy " << ainfo.occupancy << std::endl;
+    std::cout << "  occupancy " << ainfo.occupancy << std::endl;
     std::cout << "  ntex " << ainfo.mipTextureInfo.size() << std::endl;
 
     std::cout << std::endl;
