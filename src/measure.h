@@ -6,7 +6,7 @@
 #include <Eigen/Core>
 #include <Eigen/Core>
 
-constexpr double UV_SCALING_RATIO_MAX_THRESHOLD = 10.0;
+constexpr double UV_SCALING_RATIO_MAX_THRESHOLD = 100.0;
 constexpr double QUASI_CONFORMAL_DISTORTION_MAX_THRESHOLD = 100.0;
 
 /* Computes the angle between u and v */

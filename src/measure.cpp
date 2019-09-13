@@ -177,43 +177,21 @@ AtlasInfo ComputeAtlasInfo(Mesh& m, const std::vector<Chart>& atlas)
         }
     }
 
-    double globalScale = mappedAreaUV / mappedArea3D;
+    ainfo.mipTextureInfo = ComputeTexImageInfoAtMipLevels(m, atlas);
 
-    {
-        for (auto& f : m.face) {
-            // quality is the texel allocation per face area
-            int fi = tri::Index(m, f);
-            double area3D = f3D[fi];
-            double areaUV = fUV[fi];
-            if (area3D > 0 && areaUV != 0) {
-                double localScale = std::abs(areaUV) / area3D;
-                double q = localScale / globalScale;
-                f.Q() = q;
-            } else {
-                f.Q() = 0;
-            }
-        }
-
-        ainfo.sf_areaAboveThreshold = 0;
-        tri::UpdateSelection<Mesh>::FaceClear(m);
-        for (auto& f : m.face) {
-            assert(std::isfinite(f.Q()));
-            if (f.Q() > 0) {
-                if (f.Q() < UV_SCALING_RATIO_MAX_THRESHOLD)
-                    f.SetS();
-                else
-                    ainfo.sf_areaAboveThreshold += f3D[tri::Index(m, f)];
-            }
-        }
-
-        ainfo.sfHistogram.Clear();
-        ainfo.sfHistogram.SetRange(0, UV_SCALING_RATIO_MAX_THRESHOLD, 500000);
-        for (auto& f : m.face) {
-            if (f.IsS()) {
-                ainfo.sfHistogram.Add(f.Q(), DistortionWedge::Area3D(&f));
+    // occupancy
+    long availableFragments = 0;
+    long usedFragments = 0;
+    for (auto& mti : ainfo.mipTextureInfo) {
+        for (unsigned k = 0; k < mti.size(); ++k) {
+            if (mti[k].totalFragments > 0) {
+                availableFragments += (mti[k].w * mti[k].h);
+                usedFragments += mti[k].totalFragments - mti[k].lostFragments;
+                break;
             }
         }
     }
+    ainfo.occupancy = usedFragments / (double) availableFragments;
 
     {
         for (auto& f : m.face) {
@@ -262,21 +240,42 @@ AtlasInfo ComputeAtlasInfo(Mesh& m, const std::vector<Chart>& atlas)
         }
     }
 
-    ainfo.mipTextureInfo = ComputeTexImageInfoAtMipLevels(m, atlas);
+    {
+        long totalTexelCount = 0;
+        for (auto& mti : ainfo.mipTextureInfo)
+            totalTexelCount += mti[0].w * mti[0].h;
 
-    // occupancy
-    long availableFragments = 0;
-    long usedFragments = 0;
-    for (auto& v : ainfo.mipTextureInfo) {
-        for (unsigned k = 0; k < v.size(); ++k) {
-            if (v[k].totalFragments > 0) {
-                availableFragments += (v[k].w * v[k].h);
-                usedFragments += v[k].totalFragments - v[k].lostFragments;
-                break;
+        double realTextureArea = ainfo.occupancy * totalTexelCount;
+
+        double sf3D = 0;
+        double sfUV = 0;
+
+        ainfo.sf_areaAboveThreshold = 0;
+        for (auto& f : m.face) {
+            int fi = tri::Index(m, f);
+            double area3D = f3D[fi];
+            double areaUV = std::abs(fUV[fi]);
+            f.Q() = 0;
+            if (area3D > 0 && areaUV > 0) {
+                double perc3D = area3D / mappedArea3D;
+                double thresholdUV = (perc3D * realTextureArea) * UV_SCALING_RATIO_MAX_THRESHOLD;
+                if (areaUV <= thresholdUV) {
+                    f.Q() = areaUV / area3D;
+                    sf3D += area3D;
+                    sfUV += areaUV;
+                } else {
+                    ainfo.sf_areaAboveThreshold += f3D[tri::Index(m, f)];
+                }
             }
         }
+
+        ainfo.sfHistogram.Clear();
+        ainfo.sfHistogram.SetRange(0, UV_SCALING_RATIO_MAX_THRESHOLD, 500000);
+        double denom = sfUV / sf3D;
+        for (auto& f : m.face)
+            if (f.Q() > 0)
+                ainfo.sfHistogram.Add(f.Q() / denom, DistortionWedge::Area3D(&f));
     }
-    ainfo.occupancy = usedFragments / (double) availableFragments;
 
     return ainfo;
 }
@@ -740,11 +739,13 @@ void WriteJSON(const std::string& filename, const Mesh& m, const MeshInfo& minfo
     json << JSONField("qcd_perc80", ainfo.qcHistogram.Percentile(0.80), 1)    << "," << std::endl;
     json << JSONField("qcd_perc90", ainfo.qcHistogram.Percentile(0.90), 1)    << "," << std::endl;
     json << JSONField("qcd_perc99", ainfo.qcHistogram.Percentile(0.99), 1)    << "," << std::endl;
+    json << JSONField("qcd_min"   , ainfo.qcHistogram.MinElem(), 1)           << "," << std::endl;
+    json << JSONField("qcd_max"   , ainfo.qcHistogram.MaxElem(), 1)           << "," << std::endl;
     json << JSONField("qcd_avg"   , ainfo.qcHistogram.Avg(), 1)               << "," << std::endl;
     json << JSONField("qcd_rms"   , ainfo.qcHistogram.RMS(), 1)               << "," << std::endl;
     json << JSONField("qcd_var"   , ainfo.qcHistogram.Variance(), 1)          << "," << std::endl;
     json << JSONField("qcd_stddev", ainfo.qcHistogram.StandardDeviation(), 1) << "," << std::endl;
-    json << JSONField("qcd_discardedArea", ainfo.qcd_areaAboveThreshold, 1) << "," << std::endl;
+    json << JSONField("qcd_discardedArea", ainfo.qcd_areaAboveThreshold, 1)   << "," << std::endl;
 
     json << JSONField("sf_perc1" , ainfo.sfHistogram.Percentile(0.01), 1)     << "," << std::endl;
     json << JSONField("sf_perc10", ainfo.sfHistogram.Percentile(0.10), 1)     << "," << std::endl;
@@ -757,11 +758,13 @@ void WriteJSON(const std::string& filename, const Mesh& m, const MeshInfo& minfo
     json << JSONField("sf_perc80", ainfo.sfHistogram.Percentile(0.80), 1)     << "," << std::endl;
     json << JSONField("sf_perc90", ainfo.sfHistogram.Percentile(0.90), 1)     << "," << std::endl;
     json << JSONField("sf_perc99", ainfo.sfHistogram.Percentile(0.99), 1)     << "," << std::endl;
+    json << JSONField("sf_min"   , ainfo.sfHistogram.MinElem(), 1)               << "," << std::endl;
+    json << JSONField("sf_max"   , ainfo.sfHistogram.MaxElem(), 1)               << "," << std::endl;
     json << JSONField("sf_avg"   , ainfo.sfHistogram.Avg(), 1)                << "," << std::endl;
     json << JSONField("sf_rms"   , ainfo.sfHistogram.RMS(), 1)                << "," << std::endl;
     json << JSONField("sf_var"   , ainfo.sfHistogram.Variance(), 1)           << "," << std::endl;
     json << JSONField("sf_stddev", ainfo.sfHistogram.StandardDeviation(), 1)  << "," << std::endl;
-    json << JSONField("sf_discardedArea", ainfo.sf_areaAboveThreshold, 1)          << std::endl;
+    json << JSONField("sf_discardedArea", ainfo.sf_areaAboveThreshold, 1)            << std::endl;
 
     json << "}" << std::endl;
 
