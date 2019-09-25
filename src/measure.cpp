@@ -270,7 +270,7 @@ AtlasInfo ComputeAtlasInfo(Mesh& m, const std::vector<Chart>& atlas)
         }
 
         ainfo.sfHistogram.Clear();
-        ainfo.sfHistogram.SetRange(0, UV_SCALING_RATIO_MAX_THRESHOLD, 500000);
+        ainfo.sfHistogram.SetRange(0, UV_SCALING_RATIO_MAX_THRESHOLD, 2000000);
         double denom = sfUV / sf3D;
         for (auto& f : m.face)
             if (f.Q() > 0)
