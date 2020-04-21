@@ -6,6 +6,12 @@
 #include <Eigen/Core>
 #include <Eigen/Core>
 
+
+class Mesh;
+class Chart;
+struct AtlasInfo;
+struct ColorConsistencyInfo;
+
 constexpr double UV_SCALING_RATIO_MAX_THRESHOLD = 100.0;
 constexpr double QUASI_CONFORMAL_DISTORTION_MAX_THRESHOLD = 100.0;
 
@@ -64,10 +70,6 @@ Eigen::Matrix2d ComputeTransformationMatrix(const PointType& x10, const PointTyp
     return g * f.inverse();
 }
 
-class Mesh;
-class Chart;
-struct AtlasInfo;
-
 struct TexImageInfo {
     int w;  // raster width
     int h;  // raster height
@@ -95,6 +97,7 @@ struct MeshInfo {
     int g;     //genus
     int fndup;        // number of duplicate faces
     int fnzero;       // number of zero-area faces
+    int fndegen;       // number of degenerate faces
     bool oriented;    // mesh is oriented
     bool orientable;  // mesh is orientable
     int vnunref;      // number of unreferenced vertices
@@ -126,7 +129,7 @@ std::vector<std::vector<TexImageInfo>> ComputeTexImageInfoAtMipLevels(Mesh& m, c
 MeshInfo ComputeMeshInfo(Mesh& m);
 AtlasInfo ComputeAtlasInfo(Mesh& m, const std::vector<Chart>& atlas);
 
-void WriteJSON(const std::string& filename, const Mesh& m, const MeshInfo& minfo, AtlasInfo& ainfo);
+void WriteJSON(const std::string& filename, const Mesh& m, const MeshInfo& minfo, AtlasInfo& ainfo, ColorConsistencyInfo &cci);
 
 #endif // MEASURE_H
 

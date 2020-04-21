@@ -50,7 +50,7 @@ public:
 struct Chart {
     Mesh& m;
     unsigned cid;
-    short sid;
+    short ti;
     std::vector<Mesh::FacePointer> fpv;
     double area3D;
     double areaUV;
@@ -59,11 +59,24 @@ struct Chart {
     double boundaryUV;
     int boundaryCount;
 
-    Chart(Mesh& m_, unsigned cid_, short sid_) : m{m_}, cid{cid_}, sid{sid_}, area3D{0}, areaUV{0}, signedAreaUV{0}, boundary3D{0}, boundaryUV{0}, boundaryCount{0} {}
+    Chart(Mesh& m_, unsigned cid_, short ti_) : m{m_}, cid{cid_}, ti{ti_}, area3D{0}, areaUV{0}, signedAreaUV{0}, boundary3D{0}, boundaryUV{0}, boundaryCount{0} {}
 };
 
-
+// each vector contains 3*fn elements
+// data about edge j of face i is stored ad 3*i + j
+// assumes each mesh is triangular
+struct FaceFaceAdj {
+    int fn;
+    std::vector<int> faceIndex;
+    std::vector<short> oppositeEdge;
+    std::vector<bool> manifold;
+};
 
 typedef vcg::tri::Distortion<Mesh,true> DistortionWedge;
+
+
+bool LoadMesh(Mesh &m, const char *filename, int &loadmask);
+FaceFaceAdj RecordFaceFaceAdjacency(const Mesh& m);
+void GenerateAtlas(Mesh &m, std::vector<Chart>& atlas);
 
 #endif // TYPES_H

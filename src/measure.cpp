@@ -1,6 +1,7 @@
 #include "measure.h"
-#include "types.h"
+#include "mesh.h"
 #include "gl_utils.h"
+#include "color_consistency.h"
 
 #include <GL/glew.h>
 
@@ -51,11 +52,24 @@ static int FacesByTextureIndex(const Mesh& m, const std::vector<Chart>& atlas, s
     fv.resize(m.texsizes.size());
 
     for (auto& chart : atlas)
-        if (chart.sid < (int) m.texsizes.size())
+        if (chart.ti < (int) m.texsizes.size())
             for (auto fp : chart.fpv)
-                fv[chart.sid].push_back(fp);
+                fv[chart.ti].push_back(fp);
 
     return fv.size();
+}
+
+static int CountDegenerateFace(const Mesh& m)
+{
+    int count_fd = 0;
+    for (const auto& f : m.face) {
+        if (!f.IsD()) {
+            if(f.cV(0) == f.cV(1) || f.cV(0) == f.cV(2) || f.cV(1) == f.cV(2)) {
+                count_fd++;
+            }
+        }
+    }
+    return count_fd;
 }
 
 using namespace vcg;
@@ -95,6 +109,8 @@ MeshInfo ComputeMeshInfo(Mesh& m)
         if (DistortionWedge::Area3D(&f) <= 0)
             minfo.fnzero++;
     }
+
+    minfo.fndegen = CountDegenerateFace(m);
 
     minfo.cc = tri::Clean<Mesh>::CountConnectedComponents(m);
     minfo.g = -1;
@@ -270,7 +286,7 @@ AtlasInfo ComputeAtlasInfo(Mesh& m, const std::vector<Chart>& atlas)
         }
 
         ainfo.sfHistogram.Clear();
-        ainfo.sfHistogram.SetRange(0, UV_SCALING_RATIO_MAX_THRESHOLD, 2000000);
+        ainfo.sfHistogram.SetRange(0, UV_SCALING_RATIO_MAX_THRESHOLD, 20000000);
         double denom = sfUV / sf3D;
         for (auto& f : m.face)
             if (f.Q() > 0)
@@ -677,7 +693,7 @@ static std::string JSONField(const char *fname, const char *str, int indentation
     return ss.str();
 }
 
-void WriteJSON(const std::string& filename, const Mesh& m, const MeshInfo& minfo, AtlasInfo &ainfo)
+void WriteJSON(const std::string& filename, const Mesh& m, const MeshInfo& minfo, AtlasInfo &ainfo, ColorConsistencyInfo& cci)
 {
     // write all the stats to a json object
     std::ofstream json(filename);
@@ -698,7 +714,6 @@ void WriteJSON(const std::string& filename, const Mesh& m, const MeshInfo& minfo
     json << JSONField("area_normalized"        , minfo.area_normalized,    1)    << "," << std::endl;
     json << JSONField("boundary_len_normalized", minfo.bnd_len_normalized, 1)    << "," << std::endl;
 
-
     json << JSONField("boundary_loops"      , minfo.bl ,          1)    << "," << std::endl;
     json << JSONField("nonmanif_edge"       , minfo.nme,          1)    << "," << std::endl;
     json << JSONField("nonmanif_vert"       , minfo.nmv,          1)    << "," << std::endl;
@@ -706,6 +721,7 @@ void WriteJSON(const std::string& filename, const Mesh& m, const MeshInfo& minfo
     json << JSONField("genus"               , minfo.g  ,          1)    << "," << std::endl;
     json << JSONField("fndup"               , minfo.fndup,        1)    << "," << std::endl;
     json << JSONField("fnzero"              , minfo.fnzero,       1)    << "," << std::endl;
+    json << JSONField("fndegen"             , minfo.fndegen,      1)    << "," << std::endl;
     json << JSONField("vnunref"             , minfo.vnunref,      1)    << "," << std::endl;
     json << JSONField("oriented"            , minfo.oriented,     1)    << "," << std::endl;
     json << JSONField("orientable"          , minfo.orientable,   1)    << "," << std::endl;
@@ -719,6 +735,16 @@ void WriteJSON(const std::string& filename, const Mesh& m, const MeshInfo& minfo
     json << JSONField("mapped_fraction"     , ainfo.mpa,          1)    << "," << std::endl;
     json << JSONField("nfolds"              , ainfo.nfolds,       1)    << "," << std::endl;
     json << JSONField("occupancy"           , ainfo.occupancy,    1)    << "," << std::endl;
+
+    if (cci.valid) {
+        json << JSONField("seam_discrepancy_avg"   , (cci.hist.Cnt() == 0) ? 0 : cci.hist.Avg(), 1)      << "," << std::endl;
+        json << JSONField("seam_discrepancy_min"   , (cci.hist.Cnt() == 0) ? 0 : cci.hist.MinElem(), 1)  << "," << std::endl;
+        json << JSONField("seam_discrepancy_max"   , (cci.hist.Cnt() == 0) ? 0 : cci.hist.MaxElem(), 1)  << "," << std::endl;
+        json << JSONField("seam_discrepancy_rms"   , (cci.hist.Cnt() == 0) ? 0 : cci.hist.RMS(), 1)      << "," << std::endl;
+        json << JSONField("seam_discrepancy_var"   , (cci.hist.Cnt() == 0) ? 0 : cci.hist.Variance(), 1) << "," << std::endl;
+        json << JSONField("seam_discrepancy_stddev", (cci.hist.Cnt() == 0) ? 0 : cci.hist.StandardDeviation(), 1)  << "," << std::endl;
+    }
+
     json << JSONField("ntex"                , (int) ainfo.mipTextureInfo.size(), 1) << "," << std::endl;
     json << JSONField("textures"            , m.textures,                        1) << "," << std::endl;
 

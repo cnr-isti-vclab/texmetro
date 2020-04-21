@@ -51,9 +51,10 @@ win32 {
 #### SOURCE FILES ##############################################################
 
 HEADERS += \
+    mesh.h \
+    measure.h \
     gl_utils.h \
-    types.h \
-    measure.h
+    color_consistency.h
 
 SOURCES += \
     $$VCGPATH/wrap/ply/plylib.cpp \
@@ -63,6 +64,7 @@ SOURCES += \
 
 SOURCES += \
     texmetro.cpp \
+    mesh.cpp \
     measure.cpp \
-    gl_utils.cpp
-
+    gl_utils.cpp \
+    color_consistency.cpp
