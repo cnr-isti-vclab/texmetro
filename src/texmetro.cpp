@@ -92,9 +92,18 @@ int main(int argc, char *argv[])
     }
 
     tri::UpdateTopology<Mesh>::FaceFace(m);
-    FaceFaceAdj ffadj = RecordFaceFaceAdjacency(m);
 
     MeshInfo minfo = ComputeMeshInfo(m);
+
+    // remove duplicate vertices before storing ffadj so that texture seams are
+    // always joined in 3D
+    if (hasTextures) {
+        tri::Clean<Mesh>::RemoveDuplicateVertex(m);
+        tri::Allocator<Mesh>::CompactEveryVector(m);
+        tri::UpdateTopology<Mesh>::FaceFace(m);
+    }
+
+    FaceFaceAdj ffadj = RecordFaceFaceAdjacency(m);
 
     std::vector<Chart> atlas;
     GenerateAtlas(m, atlas);
