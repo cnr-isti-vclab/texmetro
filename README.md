@@ -41,7 +41,6 @@ Entry | Description
 `boundary_len`            | Boundary length
 `area_normalized`         | Normalized surface area (max bounding box side equal to 1)
 `boundary_len_normalized` | Normalized boundary length (max bounding box side equal to 1)
-
 `boundary_loops`       | Number of boundary loops
 `nonmanif_edge`        | Number of non-manifold edges
 `nonmanif_vert`        | Number of non-manifold vertices
