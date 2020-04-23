@@ -152,7 +152,7 @@ int main(int argc, char *argv[])
     for (auto& mti : ainfo.mipTextureInfo) {
         int ti = &mti - &ainfo.mipTextureInfo[0];
         for (unsigned k = 0; k < mti.size(); ++k) {
-            if (mti[k].totalFragments > 0) {
+            if (mti[k].totalTexels > 0) {
                 std::string tname = m.textures[ti];
                 if (tname.length() > 32) {
                     tname = tname.substr(0, 32);
@@ -160,11 +160,11 @@ int main(int argc, char *argv[])
                 }
 
                 std::string tres = std::to_string(m.texsizes[ti].w) + "x" + std::to_string(m.texsizes[ti].h);
-                std::string tocc = std::to_string((mti[k].totalFragments - mti[k].lostFragments) / (double) (mti[k].w * mti[k].h));
-                std::string tover = std::to_string(mti[k].overwrittenFragments / (double) (mti[k].totalFragments - mti[k].lostFragments));
+                std::string tocc = std::to_string((mti[k].totalTexels - mti[k].lostTexels) / (double) (mti[k].w * mti[k].h));
+                std::string tover = std::to_string(mti[k].overwrittenTexels / (double) (mti[k].totalTexels - mti[k].lostTexels));
                 unsigned lmip = k;
                 for (; lmip < mti.size(); ++lmip)
-                    if (mti[lmip].fragmentClashes > 0)
+                    if (mti[lmip].texelClashes > 0)
                         break;
 
                 std::cout << "  " << std::setw(32) << tname;

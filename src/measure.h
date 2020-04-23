@@ -73,12 +73,12 @@ Eigen::Matrix2d ComputeTransformationMatrix(const PointType& x10, const PointTyp
 struct TexImageInfo {
     int w;  // raster width
     int h;  // raster height
-    int totalFragments;
-    int totalFragments_bilinear;
-    int overwrittenFragments;  // number of fragments that were written more than once
-    int lostFragments;         // number of fragments lost due to overwrites: if fragment f has fw>1 writes, then lostFragmens += (fw-1)
-    int fragmentClashes;       // clashing fragments are fragments for which bilinear interpolation hits fragments from different patches
-    int boundaryFragments;
+    int totalTexels;
+    int totalTexels_bilinear;
+    int overwrittenTexels;  // number of texels that were written more than once
+    int lostTexels;         // number of texels lost due to overwrites: if texel t has tw>1 writes, then lostTexels += (tw-1)
+    int texelClashes;       // clashing texels are texels for which bilinear interpolation hits texels from different charts
+    int boundaryTexels;
 };
 
 struct MeshInfo {

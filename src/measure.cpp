@@ -200,9 +200,9 @@ AtlasInfo ComputeAtlasInfo(Mesh& m, const std::vector<Chart>& atlas)
     long usedFragments = 0;
     for (auto& mti : ainfo.mipTextureInfo) {
         for (unsigned k = 0; k < mti.size(); ++k) {
-            if (mti[k].totalFragments > 0) {
+            if (mti[k].totalTexels > 0) {
                 availableFragments += (mti[k].w * mti[k].h);
-                usedFragments += mti[k].totalFragments - mti[k].lostFragments;
+                usedFragments += mti[k].totalTexels - mti[k].lostTexels;
                 break;
             }
         }
@@ -547,20 +547,20 @@ static TexImageInfo ComputeTexImageInfo(Mesh& m, const std::vector<Mesh::FacePoi
             int n = sb[k]; // stencil value
             int checkMask = Check3x3(sb, i, j, width, height);
             if (n > 0) {
-                texInfo.totalFragments += n;
-                texInfo.totalFragments_bilinear++;
+                texInfo.totalTexels += n;
+                texInfo.totalTexels_bilinear++;
                 if ((n > 1)) {
-                    texInfo.overwrittenFragments++;
-                    texInfo.lostFragments += (n - 1);
+                    texInfo.overwrittenTexels++;
+                    texInfo.lostTexels += (n - 1);
                 }
                 if (Clash3x3(mb, i, j, width, height))
-                    texInfo.fragmentClashes++;
+                    texInfo.texelClashes++;
 
                 if (checkMask &= BitClear)
-                    texInfo.boundaryFragments++;
+                    texInfo.boundaryTexels++;
             } else {
                 if (checkMask &= BitSet)
-                    texInfo.totalFragments_bilinear++;
+                    texInfo.totalTexels_bilinear++;
             }
         }
     }
@@ -618,14 +618,14 @@ static std::string ToJSON(const TexImageInfo& tii, int indentation = 0)
         ss << "  ";
     ss << "{" << std::endl;
 
-    ss << JSONField("rw"                     , tii.w,                       indentation + 1) << "," << std::endl;
-    ss << JSONField("rh"                     , tii.h,                       indentation + 1) << "," << std::endl;
-    ss << JSONField("totalFragments"         , tii.totalFragments,          indentation + 1) << "," << std::endl;
-    ss << JSONField("totalFragments_bilinear", tii.totalFragments_bilinear, indentation + 1) << "," << std::endl;
-    ss << JSONField("overwrittenFragments"   , tii.overwrittenFragments,    indentation + 1) << "," << std::endl;
-    ss << JSONField("lostFragments"          , tii.lostFragments,           indentation + 1) << "," << std::endl;
-    ss << JSONField("fragmentClashes"        , tii.fragmentClashes,         indentation + 1) << "," << std::endl;
-    ss << JSONField("boundaryFragments"      , tii.boundaryFragments,       indentation + 1) << std::endl;
+    ss << JSONField("rw"                   , tii.w,                    indentation + 1) << "," << std::endl;
+    ss << JSONField("rh"                   , tii.h,                    indentation + 1) << "," << std::endl;
+    ss << JSONField("totalTexels"          , tii.totalTexels,          indentation + 1) << "," << std::endl;
+    ss << JSONField("totalTexels_bilinear" , tii.totalTexels_bilinear, indentation + 1) << "," << std::endl;
+    ss << JSONField("overwrittenTexels"    , tii.overwrittenTexels,    indentation + 1) << "," << std::endl;
+    ss << JSONField("lostTexels"           , tii.lostTexels,           indentation + 1) << "," << std::endl;
+    ss << JSONField("texelClashes"         , tii.texelClashes,         indentation + 1) << "," << std::endl;
+    ss << JSONField("boundaryTexels"       , tii.boundaryTexels,       indentation + 1) << std::endl;
 
     ii = indentation;
     while (ii-- > 0)
